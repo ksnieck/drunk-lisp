@@ -355,7 +355,7 @@ int main(int argc, char** argv) {
   list* l;
   printf("(");
   l = read();
-  // eval later
+  l = eval(l);
   print(l);
   output('\n');
 }
