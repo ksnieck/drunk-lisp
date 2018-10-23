@@ -2,11 +2,23 @@
 // i know this isn't lisp
 // i was stupid and implemented it on a base of lists and not pairs
 // so go fuck yourself i can do whatever i want
+
+/* data structure format:
+
+- list -> eval -> list
+- eval evals the car of the list and then looks up the symbol in the procedure table
+- eval executes the found procedure and passes it the original list
+- the procedure is then free to take the arguments as is, or eval them. The typical pattern would be to eval each argument and perform an operation with their results.
+- Do we still need a mechanism for quoting?
+*/
+
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 
 // WE GOTTA HAVE TYPES BECAUSE YOU GOTTA RESPECT YOUR UNDERLYING LANGAUGE
 #define t_void 0
@@ -85,8 +97,19 @@ integer* integer_make(integer i) {
   return p;
   }*/
 
-char input() {
-  char a = getc(stdin);
+#define input_EOF EOF
+#define input_ERR (-2)
+
+int input() {
+  int a = getc(stdin);
+  if (a == EOF && feof(stdin)) {
+    clearerr(stdin);
+    return input_EOF;
+  }
+  if (a == EOF && ferror(stdin)) {
+    clearerr(stdin);
+    return input_ERR;
+  }
   return a;
 }
 
@@ -98,6 +121,12 @@ void outputs(char* s) {
 }
 void outputb(char* s, int l) {
   printf("%.*s", l, s);
+}
+void outputf(const char* fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  vprintf(fmt, args);
+  va_end(args);
 }
 
 type parse_atom(char* buf, uint32_t len) {
@@ -115,13 +144,16 @@ type parse_atom(char* buf, uint32_t len) {
 }
 
 type parse_string() {
-  char a;
+  int a;
   int bufl = 256;
   char buf[bufl+1];
   int bufi = 0;
-  char* d;
   while (1) {
     a = input();
+    if (a <= input_EOF) {
+      printf("PANIC: EOF (-1) or read error (-2) encountered during parse_string() (%i)", a);
+      exit(-1);
+    }
     if (a == '"' && buf[bufi] != '\\')
       return type_make(t_string, string_make(buf, bufi));
     if (bufi>=bufl) {
@@ -136,7 +168,7 @@ type parse_string() {
     
 list* read();
 list* read() {
-  char a;
+  int a;
   list* l = list_make(NULL, NULL, t_list, NULL);
   list* h = l;
   int bufl = 256;
@@ -145,31 +177,33 @@ list* read() {
   while (1) {
     a = input();
     switch (a) {
+    case input_ERR:
+      printf("PANIC: encountered input stream error in read() (%i)", a);
+      exit(-1);
     case '(':
       l->type.id = t_list;
-      l->type.data = list_make(NULL, NULL, t_list, read());
+      l->type.data = read();
       break;
     case ' ':
     case '\t':
     case '\n':
     case '\r':
     case ')':
+    case input_EOF:
       if (bufi > 0) {
 	buf[bufi] = '\0';
-	bufi = 0;
 	l->type = parse_atom(buf, bufi);
-	l->next = list_make(NULL, NULL, t_void, NULL);
-	l->next->prev = l;
+	l->next = list_make(l, NULL, t_list, NULL);
 	l = l->next;
+	bufi = 0;
       }
-      if (a == ')') {
+      if (a == ')' || a == input_EOF) {
 	return h;
       }
       break;
     case '"':
       l->type = parse_string();
-      l->next = list_make(NULL, NULL, t_void, NULL);
-      l->next->prev = l;
+      l->next = list_make(l, NULL, t_list, NULL);
       l = l->next;
       break;
     default:
@@ -194,6 +228,10 @@ void print(list* l) {
     }
     switch (l->type.id) {
     case t_list:
+      if (l->type.data == NULL) {
+	output(')');
+	return;
+      }
       print((list*)l->type.data);
       break;
     case t_symbol:
@@ -215,10 +253,10 @@ void print(list* l) {
       free(buf);
       break;
     default:
-      outputs("VOID");
+      outputf("t_unknown(%d,%p)", l->type.id, l->type.data);
     }
     l = l->next;
-    if (l == NULL) {
+    if (l == NULL || (l->type.id == t_list && l->type.data == NULL)) {
       output(')');
       return;
     }
@@ -277,7 +315,6 @@ void procedure_add(char* name, char* help, list* (*call)(list* args)) {
 				      procedure_make(string_cstr(name),
 						     string_cstr(help),
 						     call));
-// why are these functions so fuckin easy (you know you've fucked up when you don't need CURLY BRACKETS
 }
 
 // not sure this declaration is necessary: procedure* env_find(env* e, string* name);
@@ -308,6 +345,11 @@ procedure* env_find(env* e, string name) {
 list* basic_add(list* a) { // after eval a better be all int / float
   list* t;
   real acc = 0;
+  if (a->next) {
+    a=list_make(NULL, NULL, t_real, real_make(0));
+  } else {    
+    a = a->next;
+  }
   while (1) {
     printf("basic_add(): eval(%p)\n", a);
     t = eval(a);
@@ -340,15 +382,17 @@ list* eval(list* l) {
     a = eval(l->type.data);
     a->prev = l->prev;
     a->next = l->next;
-    l = a;
+    l = eval(a);
+    break;
   case t_symbol: // fun part
     a = l->prev;
-    l = env_find(environment, *(string*)l->type.data)->call(l->next);
+    l = env_find(environment, *(string*)l->type.data)->call(l);
     l->prev = a;
     // ^^ dats the magic ^^
     break;
   case t_void:
     printf("eval() found a t_void?!\n");
+    break;
   case t_real:
   case t_string:
   case t_macro:
@@ -359,7 +403,6 @@ list* eval(list* l) {
 }
 
 int main(int argc, char** argv) {
-  print_test(); printf("\n");
   int depth = 0;
   char a;
   list* l;
