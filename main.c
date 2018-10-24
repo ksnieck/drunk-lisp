@@ -321,11 +321,8 @@ void procedure_add(char* name, char* help, list* (*call)(list* args)) {
 procedure* env_find(env* e, string name) {
   list* l = e->procedures;
   string ln;
-  printf("env_find()\n");
   while (1) {
-    printf("env_find-search: ");
     ln = ((procedure*)l->type.data)->name;
-    printf("%.*s\n", ln.l, ln.c);
     if (l->type.id != t_procedure) {
       printf("WARNING: env_find() found a non-procedure (%llu) in an env, skipping\n",
 	     l->type.id);
@@ -346,21 +343,19 @@ list* basic_add(list* a) { // after eval a better be all int / float
   list* t;
   real acc = 0;
   if (a->next) {
-    a=list_make(NULL, NULL, t_real, real_make(0));
-  } else {    
     a = a->next;
+  } else {    
+    a=list_make(NULL, NULL, t_real, real_make(0));
   }
   while (1) {
-    printf("basic_add(): eval(%p)\n", a);
     t = eval(a);
-    if (t->type.id != t_real) {
-      printf("PANIC: argument to '+' did not eval to real");
-      exit(-3);
+    if (t->type.id == t_real) {
+      acc += *((real*)t->type.data);
     }
-    acc += *((real*)t->type.data);
     // TODO: list_free(t)
-    if (a->next) a = a->next;
-    else break;
+    if (!a->next) break;
+    a = a->next;
+    if (a->type.id == t_list && a->type.data == NULL) break;
   }
   return list_make(NULL, NULL, t_real, real_make(acc)); // this one eats the whole list
 }
@@ -375,7 +370,6 @@ void env_basic() {
 
 list* eval(list* l) {
   if (!l) return l; // hopefully this only happens when we inside a null list
-  printf("eval(l->type.id=%llu, l->type.data=%p)\n", l->type.id, l->type.data);
   list* a;
   switch (l->type.id) {
   case t_list: // well clearly we gotta EVAL dis lis
@@ -388,6 +382,7 @@ list* eval(list* l) {
     a = l->prev;
     l = env_find(environment, *(string*)l->type.data)->call(l);
     l->prev = a;
+    l->next = list_make(l, NULL, t_list, NULL);
     // ^^ dats the magic ^^
     break;
   case t_void:
@@ -397,7 +392,7 @@ list* eval(list* l) {
   case t_string:
   case t_macro:
   case t_procedure:
-    printf("eval() got an atom %p\n", l->next);
+    break;
   }
   return l;
 }
@@ -408,7 +403,7 @@ int main(int argc, char** argv) {
   list* l;
   env_basic();
   l = read();
-  //  l = eval(l);
+  l = eval(l);
   print(l);
   output('\n');
 }
