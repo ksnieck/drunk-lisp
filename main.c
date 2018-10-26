@@ -122,6 +122,9 @@ void outputs(char* s) {
 void outputb(char* s, int l) {
   printf("%.*s", l, s);
 }
+void outputp(string* s) {
+  printf("%.*s", s->l, s->c);
+}
 void outputf(const char* fmt, ...) {
   va_list args;
   va_start(args, fmt);
@@ -317,7 +320,6 @@ void procedure_add(char* name, char* help, list* (*call)(list* args)) {
 						     call));
 }
 
-// not sure this declaration is necessary: procedure* env_find(env* e, string* name);
 procedure* env_find(env* e, string name) {
   list* l = e->procedures;
   string ln;
@@ -327,15 +329,17 @@ procedure* env_find(env* e, string name) {
       printf("WARNING: env_find() found a non-procedure (%llu) in an env, skipping\n",
 	     l->type.id);
     }
-    if (string_eq(name, ((procedure*)l->type.data)->name)==0)
+    if (string_eq(name, ((procedure*)l->type.data)->name)==0) {
       return l->type.data;
-    if (!l->next && e->parent)
+    }
+    if (!l->next && e->parent) {
       env_find(e->parent, name);
-    else {
+    } else if (l->next) {
+      l = l->next;
+    } else {
       printf("PANIC: procedure '%.*s' not found.\n", name.l, name.c);
       exit(-2);
     }
-    l = l->next;
   }
 }
 
@@ -345,7 +349,7 @@ list* basic_add(list* a) { // after eval a better be all int / float
   if (a->next) {
     a = a->next;
   } else {    
-    a=list_make(NULL, NULL, t_real, real_make(0));
+    a=list_make(a, NULL, t_real, real_make(0));
   }
   while (1) {
     t = eval(a);
@@ -361,11 +365,46 @@ list* basic_add(list* a) { // after eval a better be all int / float
 }
 // other procedures could eat only some of the argument list and then release the rest of it
 
+list* arg_eval(list* a, type default_type) {
+  // evals all elements of cdr of a that are lists
+  a = a->next;
+  list* l = a;
+  while (l != NULL) {
+    if (l->type.id == t_list) {
+      list* e = eval(l->type.data);
+      l->type = e->type;
+    }
+    l = l->next;
+  }
+  return a;
+}
+
+list* basic_subtract(list* a) {
+  a = arg_eval(a, (type){t_real, real_make(-0)});
+  if (a->type.id != t_real) {
+    printf("PANIC: don't know what to do with this type that's not a number");
+    printf("... need some kinda exception thrower\n");
+    exit(-1);
+  }
+  if (a->next == NULL) {
+    return list_make(NULL, NULL, t_real, real_make(-*((real*)a->type.data)));
+  } else {
+    print(a);printf("\n");
+    real c = *((real*)basic_add(list_make(NULL, a->next, t_symbol,
+					  string_cstr("+")))->type.data);
+    return list_make(NULL, NULL, t_real,
+		     real_make(*((real*)a->type.data)-c));
+  }
+}
+
 void env_basic() {
   // init environment
   environment = env_make(NULL, list_make(NULL, NULL, t_list, NULL));
   // add base procedures to 'environment'
   procedure_add("+", "accumulate 'real' arguments", basic_add);
+  procedure_add("-", "subtract cdr from car, or return negative of car if cdr is null ",
+		basic_subtract);
+
 }
 
 list* eval(list* l) {
